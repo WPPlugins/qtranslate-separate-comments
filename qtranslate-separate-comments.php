@@ -1,6 +1,6 @@
 <?php
 /*
-Plugin Name: qTranslate(-x) Separate Comments
+Plugin Name: qTranslate(-XT) Separate Comments
 Description: This plugin separates the user comments by the language they viewed the article in - this way you avoid duplicate content and comments in other languages than the one the current visitor is using. You can manually change the language of each comment(and you will have to set it in the begining).
 Version: 1.2.3
 Author: Nikola Nikolov
@@ -13,7 +13,7 @@ Licensing information
 Copyright 2017 Nikola Nikolov (email : nikolov.tmw@gmail.com)
 
 This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License, version 2, as 
+it under the terms of the GNU General Public License, version 2, as
 published by the Free Software Foundation.
 
 This program is distributed in the hope that it will be useful,
@@ -31,7 +31,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 * This is the base class of the plugin - most of our important code is contained within it.
 */
 class qTranslate_Separate_Comments {
-	
+
 	function __construct() {
 		self::add_filters();
 		self::add_actions();
@@ -43,7 +43,9 @@ class qTranslate_Separate_Comments {
 	* @uses add_filter()
 	**/
 	private static function add_filters() {
-		add_filter( 'comments_array', array( 'qTranslate_Separate_Comments', 'filter_comments_by_lang' ), 10, 2 );
+		if ( version_compare( get_bloginfo( 'version' ), '3.5', '<' ) ) {
+			add_filter( 'comments_array', array( 'qTranslate_Separate_Comments', 'filter_comments_by_lang' ), 10, 2 );
+		}
 		add_filter( 'manage_edit-comments_columns', array( 'qTranslate_Separate_Comments', 'filter_edit_comments_t_headers' ), 100 );
 		add_filter( 'get_comments_number', array( 'qTranslate_Separate_Comments', 'fix_comments_count' ), 100, 2 );
 	}
@@ -72,6 +74,10 @@ class qTranslate_Separate_Comments {
 		add_action( 'plugins_loaded', array('qTranslate_Separate_Comments', 'plugin_init' ), 10 );
 		add_action( 'manage_comments_custom_column', array('qTranslate_Separate_Comments', 'render_comment_lang_col' ), 10, 2 );
 		add_action( 'admin_init', array( 'qTranslate_Separate_Comments', 'admin_init' ), 10 );
+
+		if ( version_compare( get_bloginfo( 'version' ), '3.5', '>=' ) ) {
+			add_action( 'pre_get_comments', array( 'qTranslate_Separate_Comments', 'pre_get_comments_filter_by_lang' ), 10, 2 );
+		}
 	}
 
 	/**
@@ -164,7 +170,7 @@ class qTranslate_Separate_Comments {
 	public static function handle_ajax_update() {
 		if ( isset( $_POST['language'] ) && isset( $_POST['ids'] ) && is_array( $_POST['ids'] ) && check_admin_referer( 'bulk-comments' ) ) {
 			global $q_config;
-			
+
 			$language = $_POST['language'];
 			$ids = $_POST['ids'];
 
@@ -180,7 +186,7 @@ class qTranslate_Separate_Comments {
 				$result['success'] = true;
 				$result['message'] = sprintf( __( 'The language of comments with ids "%s" has been successfully changed to "%s".', 'qTranslate_Separate_Comments' ), implode(', ', $ids), $q_config['language_name'][$language] );
 			}
-			
+
 			echo json_encode($result);
 			exit;
 		}
@@ -258,7 +264,7 @@ class qTranslate_Separate_Comments {
 								update_lang(ids, curr_lang);
 								display_message(data.message);
 							};
-							
+
 							waiting.hide();
 						}, 'json');
 					};
@@ -282,7 +288,7 @@ class qTranslate_Separate_Comments {
 				})
 			})(jQuery)
 		</script>
-		<?php 
+		<?php
 	}
 
 	/**
@@ -290,8 +296,8 @@ class qTranslate_Separate_Comments {
 	* @access public
 	**/
 	public static function save_comment_lang($commentID) {
-		if ( isset($_POST['qtc_language']) && qtrans_isEnabled($_POST['qtc_language']) ) {
-			update_comment_meta($commentID, '_comment_language', $_POST['qtc_language']);
+		if ( isset( $_POST['qtc_language'] ) && self::is_lang_enabled( $_POST['qtc_language'] ) ) {
+			update_comment_meta( $commentID, '_comment_language', $_POST['qtc_language'] );
 		}
 	}
 
@@ -325,7 +331,7 @@ class qTranslate_Separate_Comments {
 		if ( preg_match( '~lang=([a-z]{2}).*?lang=([a-z]{2})~', $location ) ) {
 			global $q_config;
 			$location = preg_replace( '~#comment-\d*~', '', $location );
-			
+
 			$location = remove_query_arg( 'lang', $location );
 			if ( $q_config['language'] != $q_config['default_language'] || ! $q_config['hide_default_language'] ) {
 				$location = add_query_arg( 'lang', $q_config['language'], $location );
@@ -349,11 +355,26 @@ class qTranslate_Separate_Comments {
 		echo '<input type="hidden" name="qtc_comment_lang" value="' . esc_attr( $q_config['language'] ) . '" />';
 	}
 
+	public static function pre_get_comments_filter_by_lang( $query ) {
+		global $q_config, $wp_query, $withcomments, $post, $wpdb, $id, $comment, $user_login, $user_ID, $user_identity, $overridden_cpage;
+
+		if ( isset( $q_config ) && ! empty( $q_config['language'] ) ) {
+			$meta_query = $query->query_vars['meta_query'];
+			$meta_query = $meta_query && is_array( $meta_query ) ? $meta_query : array();
+			$meta_query[] = array(
+				'key'		=> '_comment_language',
+				'value'		=> $q_config['language'],
+				'compare'	=> '=',
+			);
+			$query->query_vars['meta_query'] = $meta_query;
+		}
+	}
+
 	/**
 	* Filters comments for the current language only
 	*
 	* This function is called whenever comments are fetched for the comments_template() function. This way the right comments(according to the current language) are fetched automatically.
-	* 
+	*
 	* @access public
 	**/
 	public static function filter_comments_by_lang($comments, $post_id) {
@@ -396,6 +417,16 @@ class qTranslate_Separate_Comments {
 		}
 
 		return $comments;
+	}
+
+	public static function is_lang_enabled( $lang ) {
+		global $q_config;
+
+		if ( ! isset( $q_config ) ) {
+			return false;
+		}
+
+		return in_array( $lang, $q_config['enabled_languages'] );
 	}
 }
 
@@ -601,14 +632,14 @@ class qTC_Comment_Query extends WP_Comment_Query {
 
 // Required for the "is_plugin_active()" and "is_plugin_active_for_network()" functions
 include_once( ABSPATH . 'wp-admin/includes/plugin.php' );
-// Only run our plugin if qTranslate OR qTranslate-X is active
+// Only run our plugin if qTranslate OR qTranslate-XT is active
 if (
 	(
 		is_plugin_active( 'qtranslate/qtranslate.php') ||
 		( is_multisite() && is_plugin_active_for_network( 'qtranslate/qtranslate.php') )
 	) || (
-		is_plugin_active( 'qtranslate-x/qtranslate.php') ||
-		( is_multisite() && is_plugin_active_for_network( 'qtranslate-x/qtranslate.php') )
+		is_plugin_active( 'qtranslate-xt/qtranslate.php') ||
+		( is_multisite() && is_plugin_active_for_network( 'qtranslate-xt/qtranslate.php') )
 	) ) {
 	global $qTranslate_Separate_Comments;
 	$qTranslate_Separate_Comments = new qTranslate_Separate_Comments();
